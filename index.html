@@ -1476,11 +1476,11 @@ function renderB2B5(){
   const totalPcs=B.pieces.reduce((a,b)=>a+b,0);
   const totalInbound=B.inboundTotal.reduce((a,b)=>a+b,0);
   const totalShelved=B.inboundShelved.reduce((a,b)=>a+b,0);
-  const backlog=Math.max(0,totalInbound-totalShelved);
+  const backlog=Math.max(0,totalPcs-totalShelved);
 
   let h=`<div class="cd"><h3><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>${t('b2b_s5_title')}${B.bol?' — '+esc(B.bol):''}</h3>`;
 
-  const pctDone=totalInbound>0?Math.round(totalShelved/totalInbound*100):0;
+  const pctDone=totalPcs>0?Math.round(totalShelved/totalPcs*100):0;
   const isDone=backlog<=0;
 
   // Main backlog number
@@ -1491,11 +1491,11 @@ function renderB2B5(){
     <div style="font-size:.75rem;color:var(--txl);margin-top:6px">${pctDone}% ${t('b2b_done')}</div>
   </div>`;
 
-  // 3 cards: Total / Done / Remaining
+  // 3 cards: Total BL / Done (shelved) / Remaining
   h+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
     <div style="background:var(--sf);border:1px solid var(--ice);border-radius:10px;padding:16px;text-align:center">
-      <div style="font-size:1.5rem;font-weight:800;color:var(--nv)">${totalInbound.toLocaleString()}</div>
-      <div style="font-size:.7rem;color:var(--txl);margin-top:4px">${t('b2b_total_to_do')}</div>
+      <div style="font-size:1.5rem;font-weight:800;color:var(--nv)">${totalPcs.toLocaleString()}</div>
+      <div style="font-size:.7rem;color:var(--txl);margin-top:4px">${t('b2b_total_to_do')} (BL)</div>
     </div>
     <div style="background:var(--sf);border:1px solid var(--ice);border-radius:10px;padding:16px;text-align:center">
       <div style="font-size:1.5rem;font-weight:800;color:var(--su)">${totalShelved.toLocaleString()}</div>
