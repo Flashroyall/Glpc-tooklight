@@ -1420,9 +1420,20 @@ function processB2B4(){
     sample.forEach((c,i)=>{if(/^SS[A-Z]{2,}/.test(c.trim())&&boxCol<0)boxCol=i});
   }
   // Deduplicate by box number, count all statuses
+  // Build BL box set for filtering (only keep boxes related to this BOL)
+  const extractNums=s=>(s.match(/\d+/g)||[]).join('');
+  const blBoxSet=new Set(B.boxes);
+  const blNumMap=new Map();
+  B.boxes.forEach(b=>{const n=extractNums(b);if(n.length>=4)blNumMap.set(n,b)});
+  const isRelatedBox=(box)=>{
+    if(blBoxSet.has(box))return true;
+    const n=extractNums(box);
+    if(n.length>=4&&blNumMap.has(n))return true;
+    return false;
+  };
   const seen=new Map(); // box -> {total, shelved}
   const order=[];
-  let completedCount=0;
+  let completedCount=0,filteredOut=0;
   for(let i=startRow;i<lines.length;i++){
     const cols=lines[i].split('\t').map(s=>s.trim());
     if(statusCol>=0){
@@ -1432,11 +1443,11 @@ function processB2B4(){
     let box=boxCol>=0?(cols[boxCol]||''):'';
     if(!box){cols.forEach(c=>{if(/^SS[A-Z]{2,}/.test(c)&&!box)box=c})}
     if(!box||box.length<4)continue;
+    // Filter: only keep boxes that match BL boxes (if BL has data)
+    if(B.boxes.length>0&&!isRelatedBox(box)){filteredOut++;continue}
     const tq=totalCol>=0?parseFloat(cols[totalCol])||0:0;
     const sq=shelvedCol>=0?parseFloat(cols[shelvedCol])||0:0;
     if(seen.has(box)){
-      // Same box, different transfer — DON'T add, take max values
-      // Each transfer row shows the SAME box totals, not partial
       const prev=seen.get(box);
       if(tq>prev.total)prev.total=tq;
       if(sq>prev.shelved)prev.shelved=sq;
@@ -1451,8 +1462,8 @@ function processB2B4(){
   B.inboundShelved=order.map(b=>seen.get(b).shelved);
   B.inboundDiff=order.map(b=>seen.get(b).total-seen.get(b).shelved);
   saveB();
-  const dupes=lines.length-startRow-order.length;
-  toast(order.length+' unique boxes'+(completedCount>0?', '+completedCount+' completed':'')+(dupes>0?', '+dupes+' dupes removed':''));
+  const dupes=lines.length-startRow-order.length-filteredOut;
+  toast(order.length+' boxes matched'+(completedCount>0?', '+completedCount+' completed':'')+(filteredOut>0?', '+filteredOut+' other BOL filtered':'')+(dupes>0?', '+dupes+' dupes removed':''));
   renderB2B4();
 }
 function renderB2B4Result(){
