@@ -1421,14 +1421,24 @@ function processB2B4(){
   }
   // Deduplicate by box number, count all statuses
   // Build BL box set for filtering (only keep boxes related to this BOL)
-  const extractNums=s=>(s.match(/\d+/g)||[]).join('');
-  const blBoxSet=new Set(B.boxes);
-  const blNumMap=new Map();
-  B.boxes.forEach(b=>{const n=extractNums(b);if(n.length>=4)blNumMap.set(n,b)});
+  // Use strict matching: exact match OR trailing numeric suffix (>=10 digits)
+  const getTrailingNum=s=>{const m=s.match(/(\d{10,})$/);return m?m[1]:''};
+  const getFullNum=s=>(s.match(/\d+/g)||[]).join('');
+  const blBoxSet=new Set(B.boxes.map(b=>b.trim().toUpperCase()));
+  const blSuffixMap=new Map();
+  B.boxes.forEach(b=>{
+    const tn=getTrailingNum(b);
+    if(tn)blSuffixMap.set(tn,b);
+    // Also map full digits for boxes without trailing number
+    const fn=getFullNum(b);
+    if(fn.length>=10&&!blSuffixMap.has(fn))blSuffixMap.set(fn,b);
+  });
   const isRelatedBox=(box)=>{
-    if(blBoxSet.has(box))return true;
-    const n=extractNums(box);
-    if(n.length>=4&&blNumMap.has(n))return true;
+    if(blBoxSet.has(box.trim().toUpperCase()))return true;
+    const tn=getTrailingNum(box);
+    if(tn&&blSuffixMap.has(tn))return true;
+    const fn=getFullNum(box);
+    if(fn.length>=10&&blSuffixMap.has(fn))return true;
     return false;
   };
   const seen=new Map(); // box -> {total, shelved}
@@ -1488,38 +1498,36 @@ function renderB2B5(){
   const totalShelved=B.inboundShelved.reduce((a,b)=>a+b,0);
   const onFloorQty=Math.max(0,totalInbound-totalShelved);
   const notInWms=Math.max(0,totalPcs-totalInbound);
-  const totalRemaining=onFloorQty+notInWms;
+  // Boxes not found in WMS are likely already done
+  const totalDone=totalShelved+notInWms;
+  const backlog=onFloorQty;
 
   let h=`<div class="cd"><h3><svg fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>${t('b2b_s5_title')}${B.bol?' — '+esc(B.bol):''}</h3>`;
 
-  const pctDone=totalPcs>0?Math.round(totalShelved/totalPcs*100):0;
-  const isDone=totalRemaining<=0;
+  const pctDone=totalPcs>0?Math.round(totalDone/totalPcs*100):0;
+  const isDone=backlog<=0;
 
-  // Main: total remaining
+  // Main: backlog on floor
   h+=`<div style="background:${isDone?'var(--sub)':'#fff8e1'};border:3px solid ${isDone?'#66bb6a':'var(--am)'};border-radius:12px;padding:24px;text-align:center;margin:14px 0">
-    <div style="font-size:2.4rem;font-weight:900;color:${isDone?'var(--su)':'var(--am)'}">${isDone?'\u2713 0':totalRemaining.toLocaleString()}</div>
+    <div style="font-size:2.4rem;font-weight:900;color:${isDone?'var(--su)':'var(--am)'}">${isDone?'\u2713 0':backlog.toLocaleString()}</div>
     <div style="font-size:.85rem;color:${isDone?'var(--su)':'var(--am)'};text-transform:uppercase;margin-top:4px;font-weight:700;letter-spacing:.05em">${t('b2b_backlog_label')}</div>
     <div style="height:8px;background:var(--ice);border-radius:4px;overflow:hidden;margin-top:12px"><div style="height:100%;width:${Math.min(pctDone,100)}%;background:${isDone?'var(--su)':'var(--am)'};border-radius:4px;transition:width .3s"></div></div>
-    <div style="font-size:.75rem;color:var(--txl);margin-top:6px">${t('b2b_already_done')}: ${totalShelved.toLocaleString()} / ${totalPcs.toLocaleString()} (${pctDone}%)</div>
+    <div style="font-size:.75rem;color:var(--txl);margin-top:6px">${t('b2b_already_done')}: ${totalDone.toLocaleString()} / ${totalPcs.toLocaleString()} (${pctDone}%)</div>
   </div>`;
 
-  // 4 cards in 2x2 grid
-  h+=`<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:12px;margin-bottom:14px">
+  // 3 cards: Total / Done / Remaining on floor
+  h+=`<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:14px">
     <div style="background:var(--sf);border:1px solid var(--ice);border-radius:10px;padding:16px;text-align:center">
       <div style="font-size:1.5rem;font-weight:800;color:var(--nv)">${totalPcs.toLocaleString()}</div>
       <div style="font-size:.7rem;color:var(--txl);margin-top:4px">${t('b2b_total_bl_pcs')}</div>
     </div>
     <div style="background:var(--sf);border:1px solid var(--ice);border-radius:10px;padding:16px;text-align:center">
-      <div style="font-size:1.5rem;font-weight:800;color:var(--su)">${totalShelved.toLocaleString()}</div>
+      <div style="font-size:1.5rem;font-weight:800;color:var(--su)">${totalDone.toLocaleString()}</div>
       <div style="font-size:.7rem;color:var(--txl);margin-top:4px">${t('b2b_already_done')}</div>
     </div>
-    <div style="background:var(--sf);border:1px solid ${onFloorQty>0?'var(--am)':'var(--su)'};border-radius:10px;padding:16px;text-align:center">
-      <div style="font-size:1.5rem;font-weight:800;color:${onFloorQty>0?'var(--am)':'var(--su)'}">${onFloorQty.toLocaleString()}</div>
+    <div style="background:var(--sf);border:1px solid ${backlog>0?'var(--am)':'var(--su)'};border-radius:10px;padding:16px;text-align:center">
+      <div style="font-size:1.5rem;font-weight:800;color:${backlog>0?'var(--am)':'var(--su)'}">${backlog.toLocaleString()}</div>
       <div style="font-size:.7rem;color:var(--txl);margin-top:4px">${t('b2b_left_on_floor')}</div>
-    </div>
-    <div style="background:var(--sf);border:1px solid ${notInWms>0?'var(--dg)':'var(--su)'};border-radius:10px;padding:16px;text-align:center">
-      <div style="font-size:1.5rem;font-weight:800;color:${notInWms>0?'var(--dg)':'var(--su)'}">${notInWms.toLocaleString()}</div>
-      <div style="font-size:.7rem;color:var(--txl);margin-top:4px">${t('b2b_not_in_wms')}</div>
     </div>
   </div>`;
 
@@ -1529,6 +1537,8 @@ function renderB2B5(){
       <div style="font-size:.8rem"><span style="color:var(--txl)">Boxes (BL):</span> <b>${B.boxes.length}</b></div>
       <div style="font-size:.8rem"><span style="color:var(--txl)">Pieces (BL):</span> <b>${totalPcs.toLocaleString()}</b></div>
       <div style="font-size:.8rem"><span style="color:var(--txl)">Boxes (Inbound):</span> <b>${B.inboundBoxes.length}</b></div>
+      <div style="font-size:.8rem"><span style="color:var(--txl)">Shelved (WMS):</span> <b>${totalShelved.toLocaleString()}</b></div>
+      <div style="font-size:.8rem"><span style="color:var(--txl)">${t('b2b_not_in_wms')}:</span> <b>${notInWms.toLocaleString()}</b></div>
       <div style="font-size:.8rem"><span style="color:var(--txl)">Total Qty (Inbound):</span> <b>${totalInbound.toLocaleString()}</b></div>
     </div>
   </details></div>`;
@@ -1549,15 +1559,23 @@ function renderB2B5(){
 }
 
 function b2bFuzzyMatch(){
-  const extractNums=s=>(s.match(/\d+/g)||[]).join('');
-  const inboundSet=new Set(B.inboundBoxes);
-  const inboundNumMap=new Map();
-  B.inboundBoxes.forEach(b=>{const n=extractNums(b);if(n.length>=4)inboundNumMap.set(n,b)});
+  const getTrailingNum=s=>{const m=s.match(/(\d{10,})$/);return m?m[1]:''};
+  const getFullNum=s=>(s.match(/\d+/g)||[]).join('');
+  const inboundSet=new Set(B.inboundBoxes.map(b=>b.trim().toUpperCase()));
+  const inboundSuffixMap=new Map();
+  B.inboundBoxes.forEach(b=>{
+    const tn=getTrailingNum(b);
+    if(tn)inboundSuffixMap.set(tn,b);
+    const fn=getFullNum(b);
+    if(fn.length>=10&&!inboundSuffixMap.has(fn))inboundSuffixMap.set(fn,b);
+  });
   const missing=[];
   B.boxes.forEach(b=>{
-    if(inboundSet.has(b))return;
-    const n=extractNums(b);
-    if(n.length>=4&&inboundNumMap.has(n))return;
+    if(inboundSet.has(b.trim().toUpperCase()))return;
+    const tn=getTrailingNum(b);
+    if(tn&&inboundSuffixMap.has(tn))return;
+    const fn=getFullNum(b);
+    if(fn.length>=10&&inboundSuffixMap.has(fn))return;
     missing.push(b);
   });
   return missing;
