@@ -1351,9 +1351,9 @@ function importSmartFile(ev){
   } else if(ext==='xlsx'||ext==='xls'){
     // XLSX — parse via JSZip-lite approach (ZIP + XML)
     const reader=new FileReader();
-    reader.onload=function(e){
+    reader.onload=async function(e){
       try{
-        const tsv=parseXlsxToTsv(new Uint8Array(e.target.result));
+        const tsv=await parseXlsxToTsv(new Uint8Array(e.target.result));
         document.getElementById('smartPasteArea').value=tsv;
         B.inputs.smartPasteArea=tsv;saveB();
         toast(file.name+' '+t('sp_file_loaded'));
@@ -1366,44 +1366,47 @@ function importSmartFile(ev){
   }
 }
 
-// Minimal XLSX parser — extracts first sheet as TSV
-function parseXlsxToTsv(data){
-  // ZIP parsing
+// Minimal async XLSX parser — extracts first sheet as TSV
+async function parseXlsxToTsv(data){
+  // ZIP parsing — read local file headers
   const view=new DataView(data.buffer);
-  const files={};
+  const entries=[];
   let pos=0;
   while(pos<data.length-4){
     const sig=view.getUint32(pos,true);
-    if(sig!==0x04034b50)break; // Local file header
-    const nameLen=view.getUint16(pos+26,true);
-    const extraLen=view.getUint16(pos+28,true);
+    if(sig!==0x04034b50)break;
     const compMethod=view.getUint16(pos+8,true);
     const compSize=view.getUint32(pos+18,true);
-    const uncompSize=view.getUint32(pos+22,true);
+    const nameLen=view.getUint16(pos+26,true);
+    const extraLen=view.getUint16(pos+28,true);
     const name=new TextDecoder().decode(data.subarray(pos+30,pos+30+nameLen));
     const fileData=data.subarray(pos+30+nameLen+extraLen,pos+30+nameLen+extraLen+compSize);
-    if(compMethod===0)files[name]=fileData; // stored (uncompressed)
-    else if(compMethod===8){
-      // deflate — use browser's DecompressionStream
-      files[name]={compressed:fileData,size:uncompSize};
-    }
+    entries.push({name,compMethod,fileData});
     pos+=30+nameLen+extraLen+compSize;
   }
-  // Helper to get file content (sync for stored, need inflate for deflated)
-  function getFile(name){
-    const f=files[name];
-    if(!f)return'';
-    if(f instanceof Uint8Array)return new TextDecoder().decode(f);
-    // For deflated, try raw inflate via DecompressionStream
-    return null; // will handle async
+  // Decompress helper
+  async function getEntry(target){
+    const e=entries.find(f=>f.name===target);
+    if(!e)return'';
+    if(e.compMethod===0)return new TextDecoder().decode(e.fileData);
+    if(e.compMethod===8){
+      // Deflate — use DecompressionStream
+      const ds=new DecompressionStream('raw');
+      const writer=ds.writable.getWriter();
+      writer.write(e.fileData);writer.close();
+      const reader=ds.readable.getReader();
+      const chunks=[];
+      while(true){const{done,value}=await reader.read();if(done)break;chunks.push(value)}
+      const total=chunks.reduce((s,c)=>s+c.length,0);
+      const result=new Uint8Array(total);
+      let offset=0;chunks.forEach(c=>{result.set(c,offset);offset+=c.length});
+      return new TextDecoder().decode(result);
+    }
+    return'';
   }
-  // Try sync first (many XLSX tools store without compression)
-  const ssXml=getFile('xl/sharedStrings.xml');
-  const s1Xml=getFile('xl/worksheets/sheet1.xml');
-  if(s1Xml===null||ssXml===null){
-    // Compressed XLSX — fallback: try reading as tab-separated text
-    throw new Error('Compressed XLSX. Export as CSV from WMS instead.');
-  }
+  const ssXml=await getEntry('xl/sharedStrings.xml');
+  const s1Xml=await getEntry('xl/worksheets/sheet1.xml');
+  if(!s1Xml)throw new Error('No sheet1 found');
   // Parse shared strings
   const ss=[];
   const ssRe=/<t[^>]*>([^<]*)<\/t>/g;
@@ -1411,16 +1414,15 @@ function parseXlsxToTsv(data){
   // Parse sheet1 rows
   const rows=[];
   const rowRe=/<row[^>]*>([\s\S]*?)<\/row>/g;
-  const cellRe=/<c\s+r="([A-Z]+)(\d+)"[^>]*(?:t="([^"]*)")?[^>]*>(?:<v>([^<]*)<\/v>)?/g;
+  const cellRe=/<c\s+r="([A-Z]+)\d+"[^>]*(?:t="([^"]*)")?[^>]*>(?:[\s\S]*?<v>([^<]*)<\/v>)?/g;
   while((m=rowRe.exec(s1Xml))!==null){
     const rowXml=m[1];
     const cells={};let maxCol=0;
-    let cm;
+    let cm;cellRe.lastIndex=0;
     while((cm=cellRe.exec(rowXml))!==null){
-      const colStr=cm[1];
-      const colIdx=colStr.split('').reduce((n,c)=>n*26+(c.charCodeAt(0)-64),0)-1;
-      const type=cm[3]||'';
-      let val=cm[4]||'';
+      const colIdx=cm[1].split('').reduce((n,c)=>n*26+(c.charCodeAt(0)-64),0)-1;
+      const type=cm[2]||'';
+      let val=cm[3]||'';
       if(type==='s'&&ss[parseInt(val)]!==undefined)val=ss[parseInt(val)];
       cells[colIdx]=val;
       if(colIdx>maxCol)maxCol=colIdx;
@@ -1429,7 +1431,7 @@ function parseXlsxToTsv(data){
     for(let i=0;i<=maxCol;i++)row.push(cells[i]||'');
     if(row.some(c=>c))rows.push(row);
   }
-  if(!rows.length)throw new Error('No data found in sheet1');
+  if(!rows.length)throw new Error('No data found in sheet');
   return rows.map(r=>r.join('\t')).join('\n');
 }
 
